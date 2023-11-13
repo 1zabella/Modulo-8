@@ -14,7 +14,7 @@ Dados quentes são gerados em alta frequência, exigindo sistemas de coleta e pr
 
 Abaixo está a representação da arquitetura que combina dados quentes e frios:
 
-
+<img width="1936" alt="Arquitetura" src="https://github.com/1zabella/Modulo-8/assets/99206817/b4f0bf7b-263f-40c1-9113-c8f7cb59cdb1">
 
 Fonte: Autoria do grupo 2 - [Link para visualização](https://www.figma.com/file/cXHYv2fVL2kA38uof8qabj/Arquitetura?type=whiteboard&node-id=0%3A1&t=QAaJpBvgY1KjeiPK-1)
 
