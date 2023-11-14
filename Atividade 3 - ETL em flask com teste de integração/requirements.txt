@@ -1,0 +1,6 @@
+Flask
+pandas
+requests
+SQLAlchemy 
+pytest
+
