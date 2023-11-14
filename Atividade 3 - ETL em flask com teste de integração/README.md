@@ -1,6 +1,15 @@
 # OpenWeather ETL em Flask
 Este projeto consiste em uma aplicação Flask que realiza uma ETL (Extração, Transformação e Carga) de dados climáticos da API OpenWeather para uma tabela no banco de dados SQLite. Além disso, inclui testes de integração para garantir o correto funcionamento das funcionalidades.
 
+## Sumário
+- [Descrição Geral](#descrição-geral)
+- [Estrutura do Projeto](#estrutura-do-projeto)
+- [Configuração do Flask](#configuração-do-flask)
+- [ETL (Extração, Transformação e Carga)](#etl-extração-transformação-e-carga)
+- [Testes](#testes)
+- [Créditos](#créditos)
+
+
 ## Descrição Geral
 A aplicação busca informações climáticas de mais de 10 cidades do Brasil, consulta a API OpenWeather para obter esses dados, e armazena as informações em uma tabela no banco de dados SQLite. A tabela possui as seguintes colunas: Data da Ingestão, Tipo, Valores e Uso.
 
@@ -44,3 +53,7 @@ Execute os testes com o comando:
 ```
 pytest test_app.py
 ```
+
+## Créditos
+O desenvolvimento desse projeto ocorreu em parceria com o aluno Pedro Rezende que, por sua vez, o fez com base no auxílio dos alunos Dayllan Alho e Patrick Miranda. 
+
