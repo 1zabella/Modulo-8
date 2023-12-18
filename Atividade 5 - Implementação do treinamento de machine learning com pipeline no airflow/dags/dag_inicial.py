@@ -1,18 +1,40 @@
 from datetime import datetime, timedelta
 from airflow import DAG
-from airflow.operators.python_operator import PythonOperator, BranchPythonOperator
+from airflow.operators.python_operator import PythonOperator
 import boto3
 import pandas as pd
 from dotenv import load_dotenv
 import os
+import logging
+from io import BytesIO
 
-# Defina suas credenciais AWS
-aws_region_name = os.getenv('AWS_REGION_NAME')
-aws_access_key_id = os.getenv('AWS_ACCESS_KEY_ID')
-aws_secret_access_key = os.getenv('AWS_SECRET_ACCESS_KEY')
-aws_session_token = os.getenv('AWS_SESSION_TOKEN')
+load_dotenv()
 
-# Configuração do DAG
+class Config:
+    def __init__(self):
+        load_dotenv()
+        self.aws_region_name = os.getenv('AWS_REGION_NAME')
+        self.aws_access_key_id = os.getenv('AWS_ACCESS_KEY_ID')
+        self.aws_secret_access_key = os.getenv('AWS_SECRET_ACCESS_KEY')
+        self.aws_session_token = os.getenv('AWS_SESSION_TOKEN')
+
+class S3Handler:
+    def __init__(self, aws_access_key_id, aws_secret_access_key, aws_region_name, aws_session_token):
+        self.client = boto3.client(
+            's3',
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+            region_name=aws_region_name,
+            aws_session_token=aws_session_token
+        )
+
+    def list_buckets(self):
+        response = self.client.list_buckets()
+        return [bucket['Name'] for bucket in response.get('Buckets', [])]
+
+config = Config()
+s3_handler = S3Handler(config.aws_access_key_id, config.aws_secret_access_key, config.aws_region_name, config.aws_session_token)
+
 default_args = {
     'owner': 'airflow',
     'depends_on_past': False,
@@ -22,64 +44,32 @@ default_args = {
     'retries': 1,
     'retry_delay': timedelta(minutes=5),
 }
+
 dag = DAG(
     'conexao_com_aws',
     default_args=default_args,
-    description='Essa dag será utilizada para conectar com o amazon S3',
+    description='Esta DAG será utilizada para conectar com o Amazon S3',
     schedule_interval=timedelta(days=1),
 )
 
-# Função para se conectar ao S3
 def connect_to_s3():
     try:
-        s3_client = boto3.client(
-            's3',
-            aws_access_key_id=aws_access_key_id,
-            aws_secret_access_key=aws_secret_access_key,
-            region_name=aws_region_name,
-            aws_session_token=aws_session_token
-        )
-        response = s3_client.list_buckets()
-        print("Buckets S3:")
-        for bucket in response['Buckets']:
-            print(f' - {bucket["Name"]}')
+        buckets = s3_handler.list_buckets()
+        logging.info("Buckets S3:")
+        for bucket in buckets:
+            logging.info(f' - {bucket}')
     except Exception as e:
-        print(f"Erro ao conectar ao S3: {e}")
+        logging.error(f"Error connecting to S3: {e}")
 
-s3_connection_task = PythonOperator(
-    task_id='s3_connection_task',
+s3_bucket_connection_task = PythonOperator(
+    task_id='s3_bucket_connection_task',
     python_callable=connect_to_s3,
     dag=dag,
 )
 
-# Operador para listar buckets no S3
-def list_buckets():
-    try:
-        s3_client = boto3.client(
-            's3',
-            aws_access_key_id=aws_access_key_id,
-            aws_secret_access_key=aws_secret_access_key,
-            region_name=aws_region_name,
-            aws_session_token=aws_session_token
-        )
-        response = s3_client.list_buckets()
-        print("Buckets S3:")
-        for bucket in response['Buckets']:
-            print(f' - {bucket["Name"]}')
-    except Exception as e:
-        print(f"Erro ao listar buckets: {e}")
-
-list_buckets_task = PythonOperator(
-    task_id='list_buckets',
-    python_callable=list_buckets,
-    dag=dag,
-)
-
 def choose_bucket():
-    # Implemente a lógica para escolher um bucket específico
-    # Pode ser manual ou baseado em lógica de seleção
     chosen_bucket = 'atividade-ponderada-airflow'
-    print("Bucket Escolhido:", chosen_bucket)
+    logging.info("Bucket Escolhido: %s", chosen_bucket)
     return chosen_bucket
 
 choose_bucket_task = PythonOperator(
@@ -88,76 +78,54 @@ choose_bucket_task = PythonOperator(
     dag=dag,
 )
 
-# Operador para listar arquivos no bucket escolhido
-def list_files_in_bucket(**kwargs):
-    chosen_bucket = kwargs['ti'].xcom_pull(task_ids='choose_bucket')
-    s3_client = boto3.client(
-        's3',
-        aws_access_key_id=aws_access_key_id,
-        aws_secret_access_key=aws_secret_access_key,
-        region_name=aws_region_name,
-        aws_session_token=aws_session_token
-    )
-    response = s3_client.list_objects(Bucket=chosen_bucket)
-    print(f"Arquivos no Bucket {chosen_bucket}:")
-    for file in response.get('Contents', []):
-        print(f' - {file["Key"]}')
+class FileProcessor:
+    def __init__(self, s3_handler, chosen_bucket, chosen_file):
+        self.s3_handler = s3_handler
+        self.chosen_bucket = chosen_bucket
+        self.chosen_file = chosen_file
 
-list_files_task = PythonOperator(
-    task_id='list_files_in_bucket',
-    python_callable=list_files_in_bucket,
-    provide_context=True,
-    dag=dag,
-)
+    def download_file_from_s3(self):
+        with BytesIO() as file_buffer:
+            self.s3_handler.download_fileobj(Bucket=self.chosen_bucket, Key=self.chosen_file, Fileobj=file_buffer)
+            file_buffer.seek(0)
+            df = pd.read_csv(file_buffer, encoding='latin1')
+        return df
 
-# Função para remover caracteres especiais
-def remove_special_characters(df):
-    df = df.applymap(lambda x: ''.join(e for e in x if e.isalnum() or e.isspace()) if isinstance(x, str) else x)
-    return df
+    def remove_special_characters(self, df):
+        df = df.applymap(lambda x: ''.join(e for e in x if e.isalnum() or e.isspace()) if isinstance(x, str) else x)
+        return df
 
-# Função para pré-processar o arquivo
+    def preprocess_data(self, df):
+        df = df.applymap(lambda x: x.lower() if isinstance(x, str) else x)
+        df = self.remove_special_characters(df)
+
+        if df.isnull().values.any():
+            logging.info("Dados nulos encontrados. Preenchendo com 'N/A'...")
+            df.fillna('N/A', inplace=True)
+
+        return df
+
+    def upload_processed_file_to_s3(self, df):
+        with BytesIO() as processed_buffer:
+            df.to_csv(processed_buffer, index=False)
+            processed_buffer.seek(0)
+            self.s3_handler.upload_fileobj(processed_buffer, Bucket=self.chosen_bucket, Key=self.chosen_file)
+
 def preprocess_file(**kwargs):
-    # Recuperando os parâmetros necessários
     ti = kwargs['ti']
     chosen_bucket = ti.xcom_pull(task_ids='choose_bucket')
     chosen_file = 'Listagem_dos_Filmes_Brasileiros_e_Estrangeiros_Exibidos_2009_a_2019.csv'  
 
-    # Configurando o cliente S3
-    s3_client = boto3.client(
-        's3',
-        aws_access_key_id=aws_access_key_id,
-        aws_secret_access_key=aws_secret_access_key,
-        region_name=aws_region_name,
-        aws_session_token=aws_session_token
-    )
+    file_processor = FileProcessor(s3_handler, chosen_bucket, chosen_file)
 
-    # Baixando o arquivo do S3
-    with open(chosen_file, 'wb') as f:
-        s3_client.download_fileobj(Bucket=chosen_bucket, Key=chosen_file, Fileobj=f)
-
-    # Carregando o arquivo em um DataFrame pandas
-    df = pd.read_csv(chosen_file, encoding='latin1')  # Ou tente encoding='utf-8'
-
-    # Convertendo todas as letras para minúsculas
-    df = df.applymap(lambda x: x.lower() if isinstance(x, str) else x)
-
-    # Removendo caracteres especiais
-    df = remove_special_characters(df)
-
-
-    # Verificando e tratando dados nulos
-    if df.isnull().values.any():
-        print("Dados nulos encontrados. Preenchendo com 'N/A'...")
-        df.fillna('N/A', inplace=True)
-
-        # Salvando o DataFrame de volta no S3
-        df.to_csv(chosen_file, index=False)
-        with open(chosen_file, 'rb') as f:
-            s3_client.upload_fileobj(f, Bucket=chosen_bucket, Key=chosen_file)
-        print("Arquivo pré-processado salvo no S3.")
-        return 'branch_has_nulls'
-    else:
-        print("Não foram encontrados dados nulos. Arquivo válido.")
+    try:
+        df = file_processor.download_file_from_s3()
+        processed_df = file_processor.preprocess_data(df)
+        file_processor.upload_processed_file_to_s3(processed_df)
+        logging.info("Arquivo pré-processado salvo no S3.")
+        return 'branch_has_nulls' if processed_df.isnull().values.any() else 'branch_no_nulls'
+    except Exception as e:
+        logging.error(f"Error preprocessing file: {e}")
         return 'branch_no_nulls'
 
 preprocess_file_task = PythonOperator(
@@ -167,7 +135,7 @@ preprocess_file_task = PythonOperator(
     dag=dag,
 )
 
-# Definindo a ordem de execução das tarefas
-s3_connection_task >> list_buckets_task >> choose_bucket_task >> list_files_task >> preprocess_file_task 
+s3_bucket_connection_task >> choose_bucket_task >> preprocess_file_task 
+
 if __name__ == "__main__":
     dag.cli()
